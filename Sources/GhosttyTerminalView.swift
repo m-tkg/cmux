@@ -5937,7 +5937,62 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
             // These never have "composing" set to true because these are the
             // result of a composition.
             keyEvent.composing = false
+            if markedTextBefore {
+                // The IME committed all or part of the preedit while handling
+                // this key (for example a Japanese conversion key like Ctrl+J
+                // that the IME did not consume: AppKit fixes the composition
+                // and delivers it through insertText). Send the committed text
+                // as text-only key events: replaying the original keycode and
+                // mods would let the key encoder prefer the control encoding
+                // (^J executes the shell line) over the text. Mirrors upstream
+                // ghostty committedPreeditTextAction.
+                for text in accumulatedText {
+                    // Bare control characters flushed while composing belong
+                    // to the IME, not the terminal (upstream ghostty #12518).
+                    if Self.shouldSuppressComposingControlInput(text, composing: true) {
+                        continue
+                    }
+#if DEBUG
+                    let ghosttySendStart = ProcessInfo.processInfo.systemUptime
+#endif
+                    sendCommittedPreeditText(text, action: action, surface: surface)
+#if DEBUG
+                    ghosttySendMs += (ProcessInfo.processInfo.systemUptime - ghosttySendStart) * 1000.0
+#endif
+                }
+
+                if shouldSendCommittedIMEConfirmKey(
+                    event: textInputEvent,
+                    markedTextBefore: markedTextBefore
+                ) {
+                    keyEvent.consumed_mods = GHOSTTY_MODS_NONE
+                    keyEvent.text = nil
+#if DEBUG
+                    let ghosttySendStart = ProcessInfo.processInfo.systemUptime
+                    _ = sendTimedGhosttyKey(
+                        surface,
+                        keyEvent,
+                        path: "terminal.keyDown.accumulatedConfirmGhosttySend",
+                        event: event
+                    )
+                    ghosttySendMs += (ProcessInfo.processInfo.systemUptime - ghosttySendStart) * 1000.0
+#else
+                    _ = ghostty_surface_key(surface, keyEvent)
+#endif
+                } else {
+                    // The key was fully absorbed by committing the preedit;
+                    // swallow its keyUp too.
+                    imeConsumedKeyUps.insert(event.keyCode)
+                }
+                return
+            }
             for text in accumulatedText {
+                if Self.shouldSuppressComposingControlInput(
+                    text,
+                    composing: markedText.length > 0
+                ) {
+                    continue
+                }
                 if shouldSendText(text) {
 #if DEBUG
                     let sendTimingStart = CmuxTypingTiming.start()
@@ -5983,27 +6038,17 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
                     #endif
                 }
             }
-
-            if shouldSendCommittedIMEConfirmKey(
-                event: textInputEvent,
-                markedTextBefore: markedTextBefore
-            ) {
-                keyEvent.consumed_mods = GHOSTTY_MODS_NONE
-                keyEvent.text = nil
-#if DEBUG
-                let ghosttySendStart = ProcessInfo.processInfo.systemUptime
-                _ = sendTimedGhosttyKey(
-                    surface,
-                    keyEvent,
-                    path: "terminal.keyDown.accumulatedConfirmGhosttySend",
-                    event: event
-                )
-                ghosttySendMs += (ProcessInfo.processInfo.systemUptime - ghosttySendStart) * 1000.0
-#else
-                _ = ghostty_surface_key(surface, keyEvent)
-#endif
-            }
         } else {
+            // Raw control characters arriving during composition belong to the
+            // IME, not the terminal (upstream ghostty #12518).
+            if Self.shouldSuppressComposingControlInput(
+                event.characters,
+                composing: keyEvent.composing
+            ) {
+                imeConsumedKeyUps.insert(event.keyCode)
+                return
+            }
+
             // Get the appropriate text for this key event
             // For control characters, this returns the unmodified character
             // so Ghostty's KeyEncoder can handle ctrl encoding
@@ -6083,6 +6128,28 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
         }
 
         // Rendering is driven by Ghostty's wakeups/renderer.
+    }
+
+    /// Sends IME-committed preedit text as a text-only key event (no keycode,
+    /// no mods). Replaying the original key here would let the key encoder
+    /// prefer the control encoding (e.g. ^J for Ctrl+J) over the committed
+    /// text. Mirrors upstream ghostty `committedPreeditTextAction`.
+    private func sendCommittedPreeditText(
+        _ text: String,
+        action: ghostty_input_action_e,
+        surface: ghostty_surface_t
+    ) {
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = action
+        keyEvent.keycode = 0
+        keyEvent.mods = GHOSTTY_MODS_NONE
+        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
+        keyEvent.composing = false
+        keyEvent.unshifted_codepoint = 0
+        text.withCString { ptr in
+            keyEvent.text = ptr
+            _ = sendGhosttyKey(surface, keyEvent)
+        }
     }
 
     @discardableResult

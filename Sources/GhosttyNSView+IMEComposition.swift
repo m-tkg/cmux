@@ -117,9 +117,30 @@ extension GhosttyNSView {
         return flags.isEmpty
     }
 
+    /// True when `text` is a single C0 control character (U+0000-U+001F)
+    /// arriving while the IME is composing. Such input belongs to the IME
+    /// and must not be forwarded to the terminal (upstream ghostty #12518).
+    static func shouldSuppressComposingControlInput(
+        _ text: String?,
+        composing: Bool
+    ) -> Bool {
+        guard composing, let text else { return false }
+        let scalars = text.unicodeScalars
+        guard let scalar = scalars.first,
+              scalars.index(after: scalars.startIndex) == scalars.endIndex else {
+            return false
+        }
+        return scalar.value < 0x20
+    }
+
     /// Returns true for active-composition command keys that belong to AppKit's
     /// text input manager even when marked text itself does not change.
     private func shouldKeepIMECompositionCommandInsideTextInput(_ event: NSEvent) -> Bool {
+        // Control-modified keys during active composition are IME commands
+        // (Japanese Ctrl+J/K/L/; conversion, Ctrl+H backspace, ...) even when
+        // they leave the marked text unchanged. Forwarding them would run the
+        // raw control code (^J executes the shell line) in the terminal.
+        if hasCompositionControlModifiers(event) { return true }
         guard hasOnlyTextInputCommandModifiers(event) else { return false }
 
         switch Int(event.keyCode) {
@@ -138,6 +159,13 @@ extension GhosttyNSView {
             .intersection(.deviceIndependentFlagsMask)
             .subtracting([.numericPad, .function, .capsLock])
         return flags.isEmpty || flags == [.shift]
+    }
+
+    private func hasCompositionControlModifiers(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.numericPad, .function, .capsLock])
+        return flags.contains(.control) && flags.subtracting([.control, .shift]).isEmpty
     }
 
     /// When `macos-option-as-alt` strips Option for terminal fallback encoding,
