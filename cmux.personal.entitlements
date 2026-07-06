@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Personal-fork Developer ID entitlements.
+
+	  Unlike cmux.release.entitlements this intentionally omits the
+	  Manaflow-team-bound keys (com.apple.application-identifier,
+	  com.apple.developer.team-identifier, keychain-access-groups): they
+	  fail codesign under a different team. Everything below is
+	  team-neutral; sign-cmux-bundle.sh requires the web-browser passkey
+	  entitlement on the signed app.
+	-->
+	<key>com.apple.developer.web-browser.public-key-credential</key>
+	<true/>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>
